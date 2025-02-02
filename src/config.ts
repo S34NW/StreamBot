@@ -28,11 +28,6 @@ export default {
     h26xPreset: process.env.STREAM_H26X_PRESET ? parsePreset(process.env.STREAM_H26X_PRESET) : 'ultrafast',
     videoCodec: process.env.STREAM_VIDEO_CODEC ? parseVideoCodec(process.env.STREAM_VIDEO_CODEC) : 'H264',
 
-    // Videos server options
-    server_enabled: process.env.SERVER_ENABLED ? parseBoolean(process.env.SERVER_ENABLED) : false,
-    server_username: process.env.SERVER_USERNAME ? process.env.SERVER_USERNAME : 'admin',
-    server_password: bcrypt.hashSync(process.env.SERVER_PASSWORD ? process.env.SERVER_PASSWORD : 'admin', 10),
-    server_port: parseInt(process.env.SERVER_PORT ? process.env.SERVER_PORT : '8080'),
 }
 
 function parseVideoCodec(value: string): "VP8" | "H264" | "H265" {

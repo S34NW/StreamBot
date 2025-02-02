@@ -28,7 +28,7 @@ export async function ffmpegScreenshot(video: string): Promise<string[]> {
                 return;
             }
             logger.info(`Taking screenshot ${i + 1} of ${video} at ${ts[i]}`);
-            ffmpeg(`${config.videosDir}/${video}`)
+            ffmpeg(`${video}`)
                 .on("end", () => {
                     const screenshotPath = `${config.previewCacheDir}/${video}-${i + 1}.jpg`;
                     images.push(screenshotPath);

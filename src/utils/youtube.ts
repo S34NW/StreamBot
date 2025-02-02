@@ -85,7 +85,7 @@ export class Youtube {
         try {
             // Get formats with both video and audio
             const formats = video.formats.filter(format => format.hasVideo && format.hasAudio);
-            
+
             if (formats.length === 0) {
                 logger.warn('No formats with both video and audio found');
                 return null;
@@ -95,11 +95,11 @@ export class Youtube {
             formats.sort((a, b) => {
                 const qualityA = a.qualityLabel ? parseInt(a.qualityLabel) : 0;
                 const qualityB = b.qualityLabel ? parseInt(b.qualityLabel) : 0;
-                
+
                 if (qualityA !== qualityB) {
                     return qualityB - qualityA;
                 }
-                
+
                 // If same quality, compare by bitrate
                 return (b.bitrate || 0) - (a.bitrate || 0);
             });
@@ -107,7 +107,7 @@ export class Youtube {
             const bestFormat = formats[0];
             logger.info(`Selected format: ${bestFormat.qualityLabel || 'N/A'} ${bestFormat.container || 'N/A'} (${Math.round((bestFormat.bitrate || 0) / 1000)} kbps)`);
 
-            
+
             return bestFormat?.url || null;
         } catch (error) {
             logger.error('Error selecting video format:', error);

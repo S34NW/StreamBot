@@ -1,4 +1,4 @@
-import { Client, TextChannel, CustomStatus, Message, MessageAttachment, ActivityOptions } from "discord.js-selfbot-v13";
+import { Client, TextChannel, CustomStatus, Message, ActivityOptions } from "discord.js-selfbot-v13";
 import { streamLivestreamVideo, MediaUdp, StreamOptions, Streamer, Utils } from "@dank074/discord-video-stream";
 import config from "./config.js";
 import fs from 'fs';
@@ -10,7 +10,6 @@ import { getVideoParams, ffmpegScreenshot } from "./utils/ffmpeg.js";
 import PCancelable, { CancelError } from "p-cancelable";
 import logger from './utils/logger.js';
 import { Youtube } from './utils/youtube.js';
-import { TwitchStream } from './@types/index.js';
 
 // Create a new instance of Streamer
 const streamer = new Streamer(new Client());
@@ -32,7 +31,7 @@ const streamOpts: StreamOptions = {
 
     /**
      * Advanced options
-     * 
+     *
      * Enables sending RTCP sender reports. Helps the receiver synchronize the audio/video frames, except in some weird
      * cases which is why you can disable it
      */
@@ -40,7 +39,7 @@ const streamOpts: StreamOptions = {
 
     /**
      * Ffmpeg will read frames at native framerate.
-     * Disabling this make ffmpeg read frames as fast as possible and setTimeout will be used to control output fps instead. 
+     * Disabling this make ffmpeg read frames as fast as possible and setTimeout will be used to control output fps instead.
      * Enabling this can result in certain streams having video/audio out of sync
      */
     readAtNativeFps: false,
@@ -52,20 +51,33 @@ const streamOpts: StreamOptions = {
     h26xPreset: config.h26xPreset
 };
 
-// Create the videosFolder dir
-fs.mkdirSync(config.videosDir, { recursive: true });
-
 // Create preview cache directory structure
 fs.mkdirSync(config.previewCacheDir, { recursive: true });
 
 // Get all video files
-const videoFiles = fs.readdirSync(config.videosDir);
+const videoExtensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv'];
+
+const readDirRecursive = (dir: string): string[] => {
+    let results: string[] = [];
+    const list = fs.readdirSync(dir, { withFileTypes: true });
+    list.forEach((file) => {
+        const filePath = path.resolve(dir, file.name);
+        if (file.isDirectory()) {
+            results = results.concat(readDirRecursive(filePath));
+        } else if (videoExtensions.includes(path.extname(file.name).toLowerCase())) {
+            results.push(filePath);
+        }
+    });
+    return results;
+};
+
+const videoFiles = readDirRecursive(config.videosDir);
 
 // Create an array of video objects
 let videos = videoFiles.map(file => {
     const fileName = path.parse(file).name;
     // replace space with _
-    return { name: fileName.replace(/ /g, '_'), path: path.join(config.videosDir, file) };
+    return { name: fileName.replace(/ /g, '_'), path: file};
 });
 
 // print out all videos
@@ -143,17 +155,27 @@ streamer.client.on('messageCreate', async (message) => {
                         sendError(message, 'Already joined');
                         return;
                     }
-                    // Get video name and find video file
-                    const videoname = args.shift()
-                    const video = videos.find(m => m.name == videoname);
+                    // Get video name or index and find video file
+                    const videoArg = args.shift();
+                    let video;
+
+                    if (!isNaN(Number(videoArg))) {
+                        const videoIndex = Number(videoArg) - 1;
+                        if (videoIndex >= 0 && videoIndex < videos.length) {
+                            video = videos[videoIndex];
+                        }
+                    } else {
+                        video = videos.find(m => m.name === videoArg);
+                    }
 
                     if (!video) {
-                        await sendError(message, 'Video not found');
+                        await sendError(message, `Video ${videoArg} not found`);
                         return;
                     }
 
                     // Check if the respect video parameters environment variable is enabled
                     if (config.respect_video_params) {
+                        logger.info(`Checking video params ${video.path}`);
                         // Checking video params
                         try {
                             const resolution = await getVideoParams(video.path);
@@ -168,20 +190,17 @@ streamer.client.on('messageCreate', async (message) => {
                             }
 
                             if (resolution.fps) {
-                                streamOpts.fps = resolution.fps
+                                streamOpts.fps = resolution.fps;
                             }
 
                         } catch (error) {
                             logger.error('Unable to determine resolution, using static resolution....', error);
                         }
                     }
-
                     // Join voice channel
                     await streamer.joinVoice(guildId, channelId, streamOpts)
-
                     // Create stream
                     const streamUdpConn = await streamer.createStream(streamOpts);
-
                     streamStatus.joined = true;
                     streamStatus.playing = true;
                     streamStatus.channelInfo = {
@@ -194,10 +213,10 @@ streamer.client.on('messageCreate', async (message) => {
                     logger.info(`Playing local video: ${video.path}`);
 
                     // Send playing message
-                    sendPlaying(message, videoname || "Local Video");
+                    sendPlaying(message, video.name || "Local Video");
 
                     // Play video
-                    playVideo(video.path, streamUdpConn, videoname);
+                    playVideo(video.path, streamUdpConn, videoArg);
                 }
                 break;
             case 'playlink':
@@ -242,16 +261,6 @@ streamer.client.on('messageCreate', async (message) => {
                                 if (yturl) {
                                     sendPlaying(message, videoInfo.videoDetails.title);
                                     playVideo(yturl, streamLinkUdpConn, videoInfo.videoDetails.title);
-                                }
-                            }
-                            break;
-                        case link.includes('twitch.tv'):
-                            {
-                                const twitchId = link.split('/').pop() as string;
-                                const twitchUrl = await getTwitchStreamUrl(link);
-                                if (twitchUrl) {
-                                    sendPlaying(message, `${twitchId}'s Twitch Stream`);
-                                    playVideo(twitchUrl, streamLinkUdpConn, `twitch.tv/${twitchId}`);
                                 }
                             }
                             break;
@@ -340,7 +349,7 @@ streamer.client.on('messageCreate', async (message) => {
                 {
                     const videoList = videos.map((video, index) => `${index + 1}. \`${video.name}\``);
                     if (videoList.length > 0) {
-                        await sendList(message, videoList);
+                        await sendPaginatedList(message, videoList);
                     } else {
                         await sendError(message, 'No videos found');
                     }
@@ -355,59 +364,14 @@ streamer.client.on('messageCreate', async (message) => {
             case 'refresh':
                 {
                     // Refresh video list
-                    const videoFiles = fs.readdirSync(config.videosDir);
+                    const videoFiles = readDirRecursive(config.videosDir);
                     videos = videoFiles.map(file => {
                         const fileName = path.parse(file).name;
                         // Replace space with _
-                        return { name: fileName.replace(/ /g, '_'), path: path.join(config.videosDir, file) };
+                        return { name: fileName.replace(/ /g, '_'), path: file };
                     });
                     const refreshedList = videos.map((video, index) => `${index + 1}. \`${video.name}\``);
-                    await sendList(message,
-                        [`(${videos.length} videos found)`, ...refreshedList], "refresh");
-                }
-                break;
-            case 'preview':
-                {
-                    const vid = args.shift();
-                    const vid_name = videos.find(m => m.name === vid);
-
-                    if (!vid_name) {
-                        await sendError(message, 'Video not found');
-                        return;
-                    }
-
-                    // React with camera emoji
-                    message.react('📸');
-
-                    // Reply with message to indicate that the preview is being generated
-                    message.reply('📸 **Generating preview thumbnails...**');
-
-                    try {
-
-                        const hasUnderscore = vid_name.name.includes('_');
-                        //                                                Replace _ with space
-                        const thumbnails = await ffmpegScreenshot(`${hasUnderscore ? vid_name.name : vid_name.name.replace(/_/g, ' ')}${path.extname(vid_name.path)}`);
-                        if (thumbnails.length > 0) {
-                            const attachments: MessageAttachment[] = [];
-                            for (const screenshotPath of thumbnails) {
-                                attachments.push(new MessageAttachment(screenshotPath));
-                            }
-
-                            // Message content
-                            const content = `📸 **Preview**: \`${vid_name.name}\``;
-
-                            // Send message with attachments
-                            await message.reply({
-                                content,
-                                files: attachments
-                            });
-
-                        } else {
-                            await sendError(message, 'Failed to generate preview thumbnails.');
-                        }
-                    } catch (error) {
-                        logger.error('Error generating preview thumbnails:', error);
-                    }
+                    await sendPaginatedList(message, refreshedList);
                 }
                 break;
             case 'help':
@@ -417,16 +381,15 @@ streamer.client.on('messageCreate', async (message) => {
                         '📽 **Available Commands**',
                         '',
                         '🎬 **Media**',
-                        `\`${config.prefix}play\` - Play local video`,
-                        `\`${config.prefix}playlink\` - Play video from URL/YouTube/Twitch`,
+                        `\`${config.prefix}play\` - Play local video, either by name or number obtained from !list`,
+                        `\`${config.prefix}playlink\` - Play video from URL/YouTube`,
                         `\`${config.prefix}ytplay\` - Play video from YouTube`,
                         `\`${config.prefix}stop\` - Stop playback`,
                         '',
                         '🛠️ **Utils**',
-                        `\`${config.prefix}list\` - Show local videos`,
-                        `\`${config.prefix}refresh\` - Update list`,
+                        `\`${config.prefix}list\` - Show local videos, page scrolling stops after 2 minutes`,
+                        `\`${config.prefix}refresh\` - Update the list based on any filesystem changes`,
                         `\`${config.prefix}status\` - Show status`,
-                        `\`${config.prefix}preview\` - Video preview`,
                         '',
                         '🔍 **Search**',
                         `\`${config.prefix}ytsearch\` - YouTube search`,
@@ -491,35 +454,6 @@ async function cleanupStreamStatus() {
     };
 }
 
-// Function to get Twitch URL
-async function getTwitchStreamUrl(url: string): Promise<string | null> {
-    try {
-        // Handle VODs
-        if (url.includes('/videos/')) {
-            const vodId = url.split('/videos/').pop() as string;
-            const vodInfo = await getVod(vodId);
-            const vod = vodInfo.find((stream: TwitchStream) => stream.resolution === `${config.width}x${config.height}`) || vodInfo[0];
-            if (vod?.url) {
-                return vod.url;
-            }
-            logger.error("No VOD URL found");
-            return null;
-        } else {
-            const twitchId = url.split('/').pop() as string;
-            const streams = await getStream(twitchId);
-            const stream = streams.find((stream: TwitchStream) => stream.resolution === `${config.width}x${config.height}`) || streams[0];
-            if (stream?.url) {
-                return stream.url;
-            }      
-            logger.error("No Stream URL found");
-            return null;
-        }
-    } catch (error) {
-        logger.error("Failed to get Twitch stream URL:", error);
-        return null;
-    }
-}
-
 // Function to get video URL from YouTube
 async function getVideoUrl(videoUrl: string): Promise<string | null> {
     return await youtube.getVideoUrl(videoUrl);
@@ -537,8 +471,8 @@ async function ytSearch(title: string): Promise<string[]> {
 
 const status_idle = () => {
     return new CustomStatus(new Client())
-        .setEmoji('📽')
-        .setState('Watching Something!')
+        .setEmoji('⏹️')
+        .setState('Lurking Around!')
 }
 
 const status_watch = (name: string) => {
@@ -568,20 +502,80 @@ async function sendFinishMessage() {
 async function sendList(message: Message, items: string[], type?: string) {
     await message.react('📋');
     if (type == "ytsearch") {
-        await message.reply(`📋 **Search Results**:\n${items.join('\n')}`);
-    } else if (type == "refresh") {
-        await message.reply(`📋 **Video list refreshed**:\n${items.join('\n')}`);
-    } else {
-        await message.channel.send(`📋 **Local Videos List**:\n${items.join('\n')}`);
+        const string = `📋 **Search Results**:\n${items.join('\n')}`
+        await message.reply(string.slice(0, 1999));
+    }
+}
+
+// Function to send paginated list
+async function sendPaginatedList(message: Message, list: string[]) {
+    const chunkSize = 1900;
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    list.forEach(item => {
+        if ((currentChunk + item).length > chunkSize) {
+            chunks.push(currentChunk);
+            currentChunk = '';
+        }
+        currentChunk += item + '\n';
+    });
+
+    if (currentChunk) {
+        chunks.push(currentChunk);
+    }
+
+    if (chunks.length === 0) {
+        await message.channel.send('No items to display.');
+        return;
+    }
+
+    let currentPage = 0;
+
+    const createMessageContent = () => `${chunks[currentPage] || 'No items to display.'}\n\n**Page ${currentPage + 1} of ${chunks.length}**`;
+
+    const sentMessage = await message.channel.send(createMessageContent());
+
+    if (chunks.length > 1) {
+        await sentMessage.react('⏮️'); // First page
+        await sentMessage.react('⬅️'); // Previous page
+        await sentMessage.react('➡️'); // Next page
+        await sentMessage.react('⏭️'); // Last page
+
+        const filter = (reaction, user) => ['⏮️', '⬅️', '➡️', '⏭️'].includes(reaction.emoji.name) && !user.bot;
+        const collector = sentMessage.createReactionCollector({ filter, time: 120000 });
+
+        collector.on('collect', (reaction, user) => {
+            reaction.users.remove(user.id);
+
+            if (reaction.emoji.name === '➡️') {
+                if (currentPage < chunks.length - 1) {
+                    currentPage++;
+                }
+            } else if (reaction.emoji.name === '⬅️') {
+                if (currentPage > 0) {
+                    currentPage--;
+                }
+            } else if (reaction.emoji.name === '⏮️') {
+                currentPage = 0;
+            } else if (reaction.emoji.name === '⏭️') {
+                currentPage = chunks.length - 1;
+            }
+
+            sentMessage.edit(createMessageContent());
+        });
+
+        collector.on('end', () => {
+            sentMessage.reactions.removeAll();
+        });
     }
 }
 
 // Function to send info message
-async function sendInfo(message: Message, title: string, description: string) {
+async function sendInfo(message, title, description) {
     await message.react('ℹ️');
     await message.channel.send(`ℹ️ **${title}**: ${description}`);
 }
-
 
 // Function to send success message
 async function sendSuccess(message: Message, description: string) {
@@ -595,11 +589,28 @@ async function sendError(message: Message, error: string) {
     await message.reply(`❌ **Error**: ${error}`);
 }
 
-// Run server if enabled in config
-if (config.server_enabled) {
-    // Run server.js
-    import('./server.js');
+// Function to send crash message
+async function sendCrash() {
+    const channel = streamer.client.channels.cache.get(config.cmdChannelId.toString()) as TextChannel;
+    if (channel) {
+        channel.send(`❌ **I just crashed, shout at Sean**`);
+    }
 }
 
 // Login to Discord
 streamer.client.login(config.token);
+
+// Clean up messages on app exit
+process.on('exit', async () => {
+    await sendCrash()
+});
+
+process.on('SIGINT', async () => {
+    await sendCrash()
+    process.exit();
+});
+
+process.on('SIGTERM', async () => {
+    await sendCrash()
+    process.exit();
+});
