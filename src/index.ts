@@ -8,7 +8,6 @@ import yts, { video_info } from 'play-dl';
 import { getVideoParams } from "./utils/ffmpeg.js";
 import logger from './utils/logger.js';
 import { Youtube } from './utils/youtube.js';
-import { time } from "console";
 
 // Create a new instance of Streamer
 const streamer = new Streamer(new Client());
@@ -30,7 +29,7 @@ const streamOpts: StreamOptions = {
     rtcpSenderReportEnabled: true,
     h26xPreset: config.h26xPreset,
     minimizeLatency: true,
-    forceChacha20Encryption: true
+    forceChacha20Encryption: true,
 };
 
 // Create preview cache directory structure
@@ -321,6 +320,16 @@ async function playVideo(video: string, title?: string) {
         if (title) {
             streamer.client.user?.setActivity(status_watch(title) as ActivityOptions);
         }
+        let subtitles: string | undefined;
+
+        // Find the first .en.srt file in the directory of the video file
+        const videoDir = path.dirname(video);
+        const files = fs.readdirSync(videoDir);
+        const subtitleFile = files.find(file => file.endsWith('.en.srt'));
+        if (subtitleFile) {
+            subtitles = path.join(videoDir, subtitleFile);
+        }
+        logger.info(`Found subs : ${subtitles}`);
 
         const { command, output } = NewApi.prepareStream(video, {
             width: streamOpts.width,
@@ -329,8 +338,17 @@ async function playVideo(video: string, title?: string) {
             bitrateVideo: streamOpts.bitrateKbps,
             bitrateVideoMax: streamOpts.maxBitrateKbps,
             hardwareAcceleratedDecoding: streamOpts.hardwareAcceleratedDecoding,
-            videoCodec: Utils.normalizeVideoCodec(streamOpts.videoCodec)
+            videoCodec: Utils.normalizeVideoCodec(streamOpts.videoCodec),
         })
+
+        // Add subtitles to the ffmpeg command
+        if (subtitles) {
+            const escapedSubtitles = subtitles.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+            command.withVideoFilter(`subtitles='${escapedSubtitles}'`);
+        }
+
+        logger.info(`FFmpeg command arguments: ${command._getArguments().join(' ')}`);
+
 
         current = command;
         await NewApi.playStream(output, streamer)
