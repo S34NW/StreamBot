@@ -134,11 +134,11 @@ streamer.client.on('messageCreate', async (message) => {
             case 'play':
                 {
                     if (streamStatus.joined) {
-                        sendError(message, 'Already joined');
+                        sendError(message, 'Already playing a video, end it first.');
                         return;
                     }
                     // Get video name or index and find video file
-                    const videoArg = args.shift();
+                    const videoArg = args.join('_')
                     let video;
 
                     if (!isNaN(Number(videoArg))) {
@@ -185,7 +185,7 @@ streamer.client.on('messageCreate', async (message) => {
                     logger.info(`Playing local video: ${video.path}`);
 
                     // Send playing message
-                    sendPlaying(message, video.name || "Local Video", Number(resolution.length));
+                    sendPlaying(message, video.name || "Local Video", Number(resolution.length), video.path);
 
                     // Play video
                     playVideo(video.path, videoArg);
@@ -218,64 +218,16 @@ streamer.client.on('messageCreate', async (message) => {
                                 ]);
 
                                 if (yturl) {
-                                    sendPlaying(message, videoInfo.videoDetails.title, Number(videoInfo.videoDetails.lengthSeconds));
+                                    sendPlaying(message, videoInfo.videoDetails.title, Number(videoInfo.videoDetails.lengthSeconds), null);
                                     playVideo(yturl, videoInfo.videoDetails.title);
                                 }
                             }
                             break;
                         default:
                             {
-                                sendPlaying(message, "URL", null);
+                                sendPlaying(message, "URL", null, null);
                                 playVideo(link, "URL");
                             }
-                    }
-                }
-                break;
-            case 'ytplay':
-                {
-                    if (streamStatus.joined) {
-                        sendError(message, 'Already joined');
-                        return;
-                    }
-
-                    const title = args.length > 1 ? args.slice(1).join(' ') : args[1] || args.shift() || '';
-
-                    if (!title) {
-                        await sendError(message, 'Please provide a video title.');
-                        return;
-                    }
-
-
-                    const [ytUrlFromTitle, searchResults] = await Promise.all([
-                        ytPlayTitle(title),
-                        yts.search(title, { limit: 1 })
-                    ]);
-
-
-                    const videoResult = searchResults[0];
-                    if (ytUrlFromTitle && videoResult?.title) {
-                        sendPlaying(message, videoResult.title, videoResult.durationInSec);
-                        playVideo(ytUrlFromTitle, videoResult.title);
-                    }
-                }
-                break;
-            case 'ytsearch':
-                {
-                    const query = args.length > 1 ? args.slice(1).join(' ') : args[1] || args.shift() || '';
-
-                    if (!query) {
-                        await sendError(message, 'Please provide a search query.');
-                        return;
-                    }
-
-                    const ytSearchQuery = await ytSearch(query);
-                    try {
-                        if (ytSearchQuery) {
-                            await sendList(message, ytSearchQuery, "ytsearch");
-                        }
-
-                    } catch (error) {
-                        await sendError(message, 'Failed to search for videos.');
                     }
                 }
                 break;
@@ -293,7 +245,18 @@ streamer.client.on('messageCreate', async (message) => {
                 break;
             case 'list':
                 {
-                    const videoList = videos.map((video, index) => `${index + 1}. \`${video.name}\``);
+                    // Refresh video list
+                    const videoFiles = readDirRecursive(config.videosDir);
+                    videos = videoFiles.map(file => {
+                        const fileName = path.parse(file).name;
+                        return { name: fileName, path: file };
+                    });
+                    const videoList = videos.map((video, index) => {
+                        const imdbMatch = video.path.match(/\[imdbid-(tt\d+)\]/);
+                        const imdbId = imdbMatch ? imdbMatch[1] : null;
+                        const imdbLink = imdbId ? `https://www.imdb.com/title/${imdbId}/` : '';
+                        return `${index + 1}. [${video.name}](<${imdbLink}>)`;
+                    });
                     if (videoList.length > 0) {
                         await sendPaginatedList(message, videoList);
                     } else {
@@ -307,19 +270,6 @@ streamer.client.on('messageCreate', async (message) => {
                         `Joined: ${streamStatus.joined}\nPlaying: ${streamStatus.playing}`);
                 }
                 break;
-            case 'refresh':
-                {
-                    // Refresh video list
-                    const videoFiles = readDirRecursive(config.videosDir);
-                    videos = videoFiles.map(file => {
-                        const fileName = path.parse(file).name;
-                        // Replace space with _
-                        return { name: fileName.replace(/ /g, '_'), path: file };
-                    });
-                    const refreshedList = videos.map((video, index) => `${index + 1}. \`${video.name}\``);
-                    await sendPaginatedList(message, refreshedList);
-                }
-                break;
             case 'help':
                 {
                     // Help text
@@ -329,16 +279,11 @@ streamer.client.on('messageCreate', async (message) => {
                         '🎬 **Media**',
                         `\`${config.prefix}play\` - Play local video, either by name or number obtained from !list`,
                         `\`${config.prefix}playlink\` - Play video from URL/YouTube`,
-                        `\`${config.prefix}ytplay\` - Play video from YouTube`,
                         `\`${config.prefix}stop\` - Stop playback`,
                         '',
                         '🛠️ **Utils**',
                         `\`${config.prefix}list\` - Show local videos, page scrolling stops after 2 minutes`,
-                        `\`${config.prefix}refresh\` - Update the list based on any filesystem changes`,
                         `\`${config.prefix}status\` - Show status`,
-                        '',
-                        '🔍 **Search**',
-                        `\`${config.prefix}ytsearch\` - YouTube search`,
                         `\`${config.prefix}help\` - Show this help`
                     ].join('\n');
 
@@ -448,9 +393,12 @@ const status_watch = (name: string) => {
 }
 
 // Funtction to send playing message
-async function sendPlaying(message: Message, title: string, length: number | null) {
-    const endTime = length ? `<t:${Math.trunc(Math.floor(Date.now() / 1000) + length)}:R>` : 'Unknown';
-    const content = `📽 **Now Playing**: \`${title}\`\n**Expected end time**: ${endTime}`;
+async function sendPlaying(message: Message, title: string, length: number | null, path: string | null) {
+    const imdbMatch = path?.match(/\[imdbid-(tt\d+)\]/);
+    const imdbId = imdbMatch ? imdbMatch[1] : null;
+    const imdbLink = imdbId ? `https://www.imdb.com/title/${imdbId}/` : '';
+    const endTime = length ? `<t:${Math.trunc(Math.floor(Date.now() / 1000) + length)}` : 'Unknown';
+    const content = `📽 **Now Playing**: ` + (imdbLink ? `[${title.replace(/_/g, ' ')}](${imdbLink})` : `${title.replace(/_/g, ' ')}`) + `\n**Expected end time**: ${endTime}:t>, ${endTime}:R>`;
     await Promise.all([
         message.react('▶️'),
         message.reply(content)
