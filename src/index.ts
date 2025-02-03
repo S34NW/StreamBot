@@ -6,7 +6,6 @@ import path from 'path';
 import ytdl from '@distube/ytdl-core';
 import yts from 'play-dl';
 import { getVideoParams } from "./utils/ffmpeg.js";
-import PCancelable, { CancelError } from "p-cancelable";
 import logger from './utils/logger.js';
 import { Youtube } from './utils/youtube.js';
 
@@ -14,7 +13,7 @@ import { Youtube } from './utils/youtube.js';
 const streamer = new Streamer(new Client());
 
 // Create a cancelable command
-let command: PCancelable<string> | undefined;
+let command
 
 // Create a new instance of Youtube
 const youtube = new Youtube();
@@ -323,7 +322,7 @@ streamer.client.on('messageCreate', async (message) => {
 
                     command?.cancel()
 
-                    logger.info("Stopped playing")
+                    logger.info("Stopped playing");
                     sendSuccess(message, 'Stopped playing video');
                 }
                 break;
@@ -393,8 +392,6 @@ streamer.client.on('messageCreate', async (message) => {
     }
 });
 
-
-
 // Function to play video
 async function playVideo(video: string, udpConn: MediaUdp, title?: string) {
     logger.info("Started playing video");
@@ -406,17 +403,14 @@ async function playVideo(video: string, udpConn: MediaUdp, title?: string) {
             streamer.client.user?.setActivity(status_watch(title) as ActivityOptions);
         }
 
-        command = PCancelable.fn<string, string>(() => streamLivestreamVideo(video, udpConn))(video);
+        command = streamLivestreamVideo(video, udpConn);
 
         const res = await command;
         logger.info(`Finished playing video: ${res}`);
 
     } catch (error) {
-        if (!(error instanceof CancelError)) {
-            logger.error("Error occurred while playing video:", error);
-        }
+        logger.error("Error occurred while playing video:", error);
     } finally {
-        command?.cancel();
         udpConn.mediaConnection.setSpeaking(false);
         udpConn.mediaConnection.setVideoStatus(false);
         await sendFinishMessage();
