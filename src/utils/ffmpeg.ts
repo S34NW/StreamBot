@@ -1,7 +1,7 @@
 import ffmpeg from "fluent-ffmpeg"
 
 // Checking video params
-export async function getVideoParams(videoPath: string): Promise<{ width: number, height: number, bitrate: string, maxbitrate: string, fps: number }> {
+export async function getVideoParams(videoPath: string): Promise<{ width: number, height: number, bitrate: string, maxbitrate: string, fps: number, length: any }> {
     return new Promise((resolve, reject) => {
         ffmpeg.ffprobe(videoPath, (err, metadata) => {
             if (err) {
@@ -20,7 +20,7 @@ export async function getVideoParams(videoPath: string): Promise<{ width: number
                     videoStream.fps = 0
                 }
 
-                resolve({ width: videoStream.width, height: videoStream.height, bitrate: videoStream.bit_rate, maxbitrate: videoStream.maxBitrate, fps: videoStream.fps });
+                resolve({ width: videoStream.width, height: videoStream.height, bitrate: videoStream.bit_rate, maxbitrate: videoStream.maxBitrate, fps: videoStream.fps, length: metadata.format.duration });
             } else {
                 reject(new Error('Unable to get Resolution.'));
             }
