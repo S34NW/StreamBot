@@ -4,9 +4,8 @@ import config from "./config.js";
 import fs from 'fs';
 import path from 'path';
 import ytdl from '@distube/ytdl-core';
-import { getStream, getVod } from 'twitch-m3u8';
 import yts from 'play-dl';
-import { getVideoParams, ffmpegScreenshot } from "./utils/ffmpeg.js";
+import { getVideoParams } from "./utils/ffmpeg.js";
 import PCancelable, { CancelError } from "p-cancelable";
 import logger from './utils/logger.js';
 import { Youtube } from './utils/youtube.js';
@@ -28,27 +27,10 @@ const streamOpts: StreamOptions = {
     maxBitrateKbps: config.maxBitrateKbps,
     hardwareAcceleratedDecoding: config.hardwareAcceleratedDecoding,
     videoCodec: Utils.normalizeVideoCodec(config.videoCodec),
-
-    /**
-     * Advanced options
-     *
-     * Enables sending RTCP sender reports. Helps the receiver synchronize the audio/video frames, except in some weird
-     * cases which is why you can disable it
-     */
     rtcpSenderReportEnabled: true,
-
-    /**
-     * Ffmpeg will read frames at native framerate.
-     * Disabling this make ffmpeg read frames as fast as possible and setTimeout will be used to control output fps instead.
-     * Enabling this can result in certain streams having video/audio out of sync
-     */
-    readAtNativeFps: false,
-
-    /**
-     * Encoding preset for H264 or H265. The faster it is, the lower the quality
-     * Available presets: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
-     */
-    h26xPreset: config.h26xPreset
+    h26xPreset: config.h26xPreset,
+    minimizeLatency: true,
+    forceChacha20Encryption: true
 };
 
 // Create preview cache directory structure
@@ -411,6 +393,8 @@ streamer.client.on('messageCreate', async (message) => {
     }
 });
 
+
+
 // Function to play video
 async function playVideo(video: string, udpConn: MediaUdp, title?: string) {
     logger.info("Started playing video");
@@ -432,6 +416,7 @@ async function playVideo(video: string, udpConn: MediaUdp, title?: string) {
             logger.error("Error occurred while playing video:", error);
         }
     } finally {
+        command?.cancel();
         udpConn.mediaConnection.setSpeaking(false);
         udpConn.mediaConnection.setVideoStatus(false);
         await sendFinishMessage();

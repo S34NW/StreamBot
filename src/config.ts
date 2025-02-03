@@ -1,5 +1,4 @@
 import dotenv from "dotenv"
-import bcrypt from "bcrypt";
 
 dotenv.config()
 
